@@ -198,6 +198,73 @@ class GlobalCallListTests(APITestCase):
         self.assertNotIn(self.recent_call.id, [r['id'] for r in response.data['results']])
 
 
+    def test_branch_scoping_for_non_staff_list(self):
+        """Non-staff user in Branch X cannot see Branch Y calls in list endpoint."""
+        from apps.branch.models import Branch
+        from apps.lead.models import LeadCall
+        
+        branch_y = Branch.objects.create(name='Dharan', code='DHR')
+        dharan_user = User.objects.create_user(
+            email='dharan@test.com', name='Dharan User', password='x',
+            branch=branch_y, is_staff=False
+        )
+        
+        # Ensure recent_call belongs to Branch X (not Branch Y)
+        LeadCall.objects.filter(id=self.recent_call.id).update(branch=self.branch)
+        
+        self.client.force_authenticate(dharan_user)
+        response = self.client.get('/api/calls/')
+        
+        self.assertEqual(response.status_code, 200)
+        returned_ids = [r['id'] for r in response.data['results']]
+        self.assertNotIn(self.recent_call.id, returned_ids)
+
+
+    def test_branch_scoping_for_non_staff_summary(self):
+        """Non-staff user in Branch X cannot see Branch Y metrics in summary endpoint."""
+        from apps.branch.models import Branch
+        from apps.lead.models import LeadCall
+        
+        branch_y = Branch.objects.create(name='Dharan', code='DHR')
+        dharan_user = User.objects.create_user(
+            email='dharan_summary@test.com', name='Dharan Summary User', password='x',
+            branch=branch_y, is_staff=False
+        )
+        
+        # Assign existing test calls to Branch X
+        LeadCall.objects.filter(id=self.recent_call.id).update(branch=self.branch)
+        
+        self.client.force_authenticate(dharan_user)
+        response = self.client.get('/api/calls/summary/')
+        
+        self.assertEqual(response.status_code, 200)
+        # Summary total_calls count must be 0 for Dharan user
+        self.assertEqual(response.data.get('total_calls', 0), 0)
+
+
+    def test_branch_scoping_for_non_staff_export(self):
+        """Non-staff user in Branch X cannot see Branch Y rows in CSV export."""
+        from apps.branch.models import Branch
+        from apps.lead.models import LeadCall
+        
+        branch_y = Branch.objects.create(name='Dharan', code='DHR')
+        dharan_user = User.objects.create_user(
+            email='dharan_export@test.com', name='Dharan Export User', password='x',
+            branch=branch_y, is_staff=False
+        )
+        
+        # Assign call to Branch X
+        LeadCall.objects.filter(id=self.recent_call.id).update(branch=self.branch)
+        
+        self.client.force_authenticate(dharan_user)
+        response = self.client.get('/api/calls/export/')
+        
+        self.assertEqual(response.status_code, 200)
+        csv_content = response.content.decode('utf-8')
+        # Prove that phone number/call reference of Branch X does not leak into Dharan user's CSV
+        self.assertNotIn(self.recent_call.phone_number, csv_content)    
+
+
 class GlobalCallSummaryAndExportTests(APITestCase):
     def setUp(self):
         from datetime import timedelta
